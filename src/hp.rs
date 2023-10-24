@@ -33,7 +33,7 @@ impl<T> Node<T> {
 unsafe impl<T: Sync> Sync for Node<T> {}
 unsafe impl<T: Sync> Send for Node<T> {}
 
-pub struct DoubleLink<T> {
+pub struct DoubleLink<T: Sync + Send> {
     head: CachePadded<AtomicPtr<Node<T>>>,
     tail: CachePadded<AtomicPtr<Node<T>>>,
 }
@@ -124,9 +124,11 @@ impl<T: Sync + Send> DoubleLink<T> {
     }
 }
 
-impl<T> Drop for DoubleLink<T> {
+impl<T: Sync + Send> Drop for DoubleLink<T> {
     fn drop(&mut self) {
-        
+        let holder = &mut Holder::new();
+        while self.dequeue(holder).is_some() {}
+        unsafe { drop(Box::from_raw(self.head.load(Ordering::Relaxed))) };
     }
 }
 
