@@ -101,16 +101,73 @@ impl<T: Sync + Send> Drop for DoubleLink<T> {
     }
 }
 
-#[test]
-fn simple() {
-    let queue = DoubleLink::new();
-    let guard = &crossbeam_epoch::pin();
-    assert!(queue.dequeue(guard).is_none());
-    queue.enqueue(1, guard);
-    queue.enqueue(2, guard);
-    queue.enqueue(3, guard);
-    assert_eq!(*queue.dequeue(guard).unwrap(), 1);
-    assert_eq!(*queue.dequeue(guard).unwrap(), 2);
-    assert_eq!(*queue.dequeue(guard).unwrap(), 3);
-    assert!(queue.dequeue(guard).is_none());
+#[cfg(test)]
+mod test {
+    use std::mem::zeroed;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use super::DoubleLink;
+    use crossbeam_epoch::pin;
+    use crossbeam_utils::thread::scope;
+
+    #[test]
+    fn simple() {
+        let queue = DoubleLink::new();
+        let guard = &pin();
+        assert!(queue.dequeue(guard).is_none());
+        queue.enqueue(1, guard);
+        queue.enqueue(2, guard);
+        queue.enqueue(3, guard);
+        assert_eq!(*queue.dequeue(guard).unwrap(), 1);
+        assert_eq!(*queue.dequeue(guard).unwrap(), 2);
+        assert_eq!(*queue.dequeue(guard).unwrap(), 3);
+        assert!(queue.dequeue(guard).is_none());
+    }
+
+    #[test]
+    fn smoke() {
+        const THREADS: usize = 100;
+        const ELEMENTS_PER_THREAD: usize = 10000;
+
+        let queue = DoubleLink::new();
+        let found = Box::new(unsafe { zeroed::<[AtomicU32; THREADS * ELEMENTS_PER_THREAD]>() });
+
+        scope(|s| {
+            for t in 0..THREADS {
+                let queue = &queue;
+                s.spawn(move |_| {
+                    for i in 0..ELEMENTS_PER_THREAD {
+                        queue.enqueue((t * ELEMENTS_PER_THREAD + i).to_string(), &pin());
+                    }
+                });
+            }
+        })
+        .unwrap();
+
+        scope(|s| {
+            for _ in 0..THREADS {
+                let queue = &queue;
+                let found = &found;
+                s.spawn(move |_| {
+                    for _ in 0..ELEMENTS_PER_THREAD {
+                        let guard = pin();
+                        let res = queue.dequeue(&guard).unwrap();
+                        assert_eq!(
+                            found[res.parse::<usize>().unwrap()].fetch_add(1, Ordering::Relaxed),
+                            0
+                        );
+                    }
+                });
+            }
+        })
+        .unwrap();
+
+        assert!(
+            found
+                .iter()
+                .filter(|v| v.load(Ordering::Relaxed) == 0)
+                .count()
+                == 0
+        );
+    }
 }
