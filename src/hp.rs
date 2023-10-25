@@ -136,6 +136,7 @@ fn protect_link<T>(link: &AtomicPtr<Node<T>>, hazptr: &mut HazardPointer<'static
     let mut ptr = link.load(Ordering::Relaxed);
     loop {
         hazptr.protect_raw(ptr);
+        fence(Ordering::SeqCst);
         let new_ptr = link.load(Ordering::Acquire);
         if ptr == new_ptr {
             return ptr;
@@ -146,7 +147,6 @@ fn protect_link<T>(link: &AtomicPtr<Node<T>>, hazptr: &mut HazardPointer<'static
 
 #[cfg(test)]
 mod test {
-    use std::mem::zeroed;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::{DoubleLink, Shield};
@@ -172,7 +172,8 @@ mod test {
         const ELEMENTS_PER_THREAD: usize = 10000;
 
         let queue = DoubleLink::new();
-        let found = Box::new(unsafe { zeroed::<[AtomicU32; THREADS * ELEMENTS_PER_THREAD]>() });
+        let mut found = Vec::new();
+        found.resize_with(THREADS * ELEMENTS_PER_THREAD, || AtomicU32::new(0));
 
         scope(|s| {
             for t in 0..THREADS {

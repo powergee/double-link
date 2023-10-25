@@ -103,7 +103,6 @@ impl<T: Sync + Send> Drop for DoubleLink<T> {
 
 #[cfg(test)]
 mod test {
-    use std::mem::zeroed;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::DoubleLink;
@@ -130,7 +129,8 @@ mod test {
         const ELEMENTS_PER_THREAD: usize = 10000;
 
         let queue = DoubleLink::new();
-        let found = Box::new(unsafe { zeroed::<[AtomicU32; THREADS * ELEMENTS_PER_THREAD]>() });
+        let mut found = Vec::new();
+        found.resize_with(THREADS * ELEMENTS_PER_THREAD, || AtomicU32::new(0));
 
         scope(|s| {
             for t in 0..THREADS {
