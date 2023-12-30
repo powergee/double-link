@@ -62,7 +62,7 @@ impl<T> DoubleLink<T> {
         loop {
             let ltail = protect_link(&self.tail, handle);
             // A protection of `lprev` is not required, as a hazard pointer of `ltail`
-            // protects adjecent nodes as well.
+            // protects adjacent nodes as well.
             let lprev = unsafe { &*(*ltail).prev };
 
             node_mut.prev = ltail;
@@ -217,31 +217,28 @@ impl LocalHandle {
 
     fn try_reclaim(&self, bag: &mut Vec<Deferred>, ltail: *mut Node<u8>) {
         fence(Ordering::SeqCst);
-        bag.sort_by_key(|d| d.0);
-        let mut guarded = vec![false; bag.len()];
-        {
-            let mut check_guarded = |ptr| {
-                if let Ok(idx) = bag.binary_search_by_key(&ptr, |d| d.0) {
-                    guarded[idx] = true;
-                }
-            };
-            for local in self.global().locals.iter_using() {
-                let node = local.hazptr.load(Ordering::Relaxed);
-                check_guarded(node);
-                if let Some(node) = unsafe { node.as_ref() } {
-                    // Accessing `prev` and `next` is vaild regardless of the actual item type.
-                    // This is because `Node<T>` uses C representation and is aligned by 8 bytes.
-                    check_guarded(node.prev);
-                    check_guarded(node.next.load(Ordering::Relaxed));
-                }
-            }
-        }
+        let mut guarded = self
+            .global()
+            .locals
+            .iter_using()
+            .map(|local| local.hazptr.load(Ordering::Relaxed))
+            .collect::<Vec<_>>();
+        guarded.sort();
+
+        let is_guarded = |ptr: *mut Node<u8>| {
+            let node = unsafe { &*ptr };
+            guarded.binary_search(&ptr).is_ok()
+                || guarded.binary_search(&node.prev).is_ok()
+                || guarded
+                    .binary_search(&node.next.load(Ordering::SeqCst))
+                    .is_ok()
+        };
 
         *bag = bag
             .drain(..)
-            .enumerate()
-            .filter_map(|(i, d)| {
-                if guarded[i] || unsafe { &*d.0 }.next.load(Ordering::SeqCst) == ltail {
+            .filter_map(|d| {
+                let tail_adj = unsafe { &*d.0 }.next.load(Ordering::SeqCst) == ltail;
+                if is_guarded(d.0) || tail_adj {
                     Some(d)
                 } else {
                     unsafe { d.execute() };
