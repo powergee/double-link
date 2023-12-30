@@ -215,3 +215,5 @@ mod test {
         );
     }
 }
+
+fn main() {}
